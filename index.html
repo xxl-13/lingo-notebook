@@ -219,6 +219,10 @@
             transition: var(--transition);
             cursor: pointer;
             position: relative;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
         }
 
         .sentence.analyzing {
@@ -259,15 +263,32 @@
 
         /* ========== Analysis Bubble ========== */
         .analysis-bubble {
-            position: absolute;
+            position: fixed;
             background: white;
             border-radius: var(--border-radius);
             box-shadow: 0 8px 32px rgba(0,0,0,0.2);
             padding: 25px;
             max-width: 400px;
             width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
             z-index: 200;
             animation: bubbleIn 0.3s ease;
+        }
+
+        /* Mobile optimization */
+        @media (max-width: 768px) {
+            .analysis-bubble {
+                position: fixed;
+                left: 5% !important;
+                right: 5%;
+                bottom: 20px !important;
+                top: auto !important;
+                width: 90%;
+                max-width: none;
+                max-height: 70vh;
+                border-radius: var(--border-radius) var(--border-radius) 0 0;
+            }
         }
 
         @keyframes bubbleIn {
@@ -454,6 +475,34 @@
             }
         }
 
+        /* ========== Bubble Overlay (Mobile) ========== */
+        .bubble-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 199;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @media (max-width: 768px) {
+            .bubble-overlay {
+                display: block;
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
         /* ========== Utility Classes ========== */
         .hidden {
             display: none !important;
@@ -511,6 +560,13 @@
                 ></div>
             </div>
         </div>
+
+        <!-- Bubble Overlay (Mobile) -->
+        <div
+            v-if="activeBubble"
+            class="bubble-overlay"
+            @click="activeBubble = null"
+        ></div>
 
         <!-- Analysis Bubble -->
         <div
@@ -645,7 +701,7 @@
                     return detectedSentences;
                 };
 
-                // Keyboard Handler - Move cursor out of sentence spans
+                // Keyboard Handler - Move cursor out of sentence spans and handle deletion
                 const handleKeyDown = (event) => {
                     const selection = window.getSelection();
                     if (!selection.rangeCount) return;
@@ -653,7 +709,61 @@
                     const range = selection.getRangeAt(0);
                     const node = range.startContainer;
 
-                    // Check if cursor is inside a sentence span
+                    // Handle Backspace and Delete for sentence spans
+                    if (event.key === 'Backspace' || event.key === 'Delete') {
+                        // Check if we're about to delete a sentence span
+                        let sentenceToDelete = null;
+
+                        if (event.key === 'Backspace') {
+                            // Check if previous sibling is a sentence span
+                            if (node.nodeType === Node.TEXT_NODE && range.startOffset === 0) {
+                                const prevSibling = node.previousSibling;
+                                if (prevSibling && prevSibling.classList && prevSibling.classList.contains('sentence')) {
+                                    sentenceToDelete = prevSibling;
+                                }
+                            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                                const child = node.childNodes[range.startOffset - 1];
+                                if (child && child.classList && child.classList.contains('sentence')) {
+                                    sentenceToDelete = child;
+                                }
+                            }
+                        } else if (event.key === 'Delete') {
+                            // Check if next sibling is a sentence span
+                            if (node.nodeType === Node.TEXT_NODE && range.startOffset === node.textContent.length) {
+                                const nextSibling = node.nextSibling;
+                                if (nextSibling && nextSibling.classList && nextSibling.classList.contains('sentence')) {
+                                    sentenceToDelete = nextSibling;
+                                }
+                            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                                const child = node.childNodes[range.startOffset];
+                                if (child && child.classList && child.classList.contains('sentence')) {
+                                    sentenceToDelete = child;
+                                }
+                            }
+                        }
+
+                        if (sentenceToDelete) {
+                            event.preventDefault();
+                            const sentenceId = parseFloat(sentenceToDelete.dataset.id);
+
+                            // Remove from sentences array
+                            const index = sentences.value.findIndex(s => s.id === sentenceId);
+                            if (index !== -1) {
+                                sentences.value.splice(index, 1);
+                            }
+
+                            // Remove the element and its trailing space
+                            const nextSibling = sentenceToDelete.nextSibling;
+                            if (nextSibling && nextSibling.nodeType === Node.TEXT_NODE && nextSibling.textContent === ' ') {
+                                nextSibling.remove();
+                            }
+                            sentenceToDelete.remove();
+
+                            return;
+                        }
+                    }
+
+                    // Check if cursor is inside a sentence span (shouldn't happen with contenteditable=false, but just in case)
                     let sentenceSpan = null;
                     if (node.nodeType === Node.TEXT_NODE && node.parentElement) {
                         sentenceSpan = node.parentElement.closest('.sentence');
@@ -840,7 +950,7 @@ Rules:
                                 ? 'analyzed-red'
                                 : `analyzed-${getScoreClass(sentence.analysis?.score || 0)}`;
 
-                            html += `<span class="sentence ${statusClass}" data-id="${sentence.id}">${escapeHtml(sentence.currentText)}</span>`;
+                            html += `<span class="sentence ${statusClass}" data-id="${sentence.id}" contenteditable="false">${escapeHtml(sentence.currentText)}</span>`;
 
                             // Add a space after the sentence to allow cursor to move out
                             // This prevents cursor from being trapped inside the span
@@ -922,21 +1032,52 @@ Rules:
                     activeBubble.value = sentence;
 
                     nextTick(() => {
-                        const rect = element.getBoundingClientRect();
-                        const bubbleHeight = 600; // Approximate
+                        const isMobile = window.innerWidth <= 768;
 
-                        let top = rect.bottom + window.scrollY + 10;
+                        if (isMobile) {
+                            // On mobile, use fixed bottom positioning (handled by CSS)
+                            bubblePosition.value = {};
+                        } else {
+                            // On desktop, calculate smart positioning
+                            const rect = element.getBoundingClientRect();
+                            const bubbleWidth = 400;
+                            const bubbleMaxHeight = window.innerHeight * 0.8;
+                            const viewportHeight = window.innerHeight;
+                            const viewportWidth = window.innerWidth;
 
-                        // If bubble would go off bottom, show above
-                        if (rect.bottom + bubbleHeight > window.innerHeight) {
-                            top = rect.top + window.scrollY - bubbleHeight - 10;
+                            let left = rect.left;
+                            let top = rect.bottom + 10;
+
+                            // Adjust horizontal position to stay in viewport
+                            if (left + bubbleWidth > viewportWidth - 20) {
+                                left = viewportWidth - bubbleWidth - 20;
+                            }
+                            if (left < 20) {
+                                left = 20;
+                            }
+
+                            // Check if bubble would go off bottom of viewport
+                            if (top + bubbleMaxHeight > viewportHeight) {
+                                // Try to show above the sentence
+                                const topPosition = rect.top - bubbleMaxHeight - 10;
+                                if (topPosition > 20) {
+                                    top = topPosition;
+                                } else {
+                                    // If it doesn't fit above either, center it vertically
+                                    top = Math.max(20, (viewportHeight - bubbleMaxHeight) / 2);
+                                }
+                            }
+
+                            // Ensure bubble doesn't go above viewport
+                            if (top < 20) {
+                                top = 20;
+                            }
+
+                            bubblePosition.value = {
+                                left: `${left}px`,
+                                top: `${top}px`
+                            };
                         }
-
-                        bubblePosition.value = {
-                            position: 'absolute',
-                            left: `${Math.max(20, rect.left)}px`,
-                            top: `${top}px`
-                        };
                     });
                 };
 
