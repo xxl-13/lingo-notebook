@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - claude/vue-hello-world-page-01KCzQfwFwgZgShCm5Kve3Sp
+      - claude/language-notebook-ai-01CBV6q7grQKCwUKSjZvLrZ5
       - main
   workflow_dispatch:
 
