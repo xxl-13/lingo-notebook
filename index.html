@@ -505,6 +505,7 @@
                     contenteditable="true"
                     data-placeholder="Start writing in English... Each completed sentence will be analyzed automatically!"
                     @input="handleInput"
+                    @keydown="handleKeyDown"
                     @click="handleEditorClick"
                     ref="editor"
                 ></div>
@@ -644,6 +645,51 @@
                     return detectedSentences;
                 };
 
+                // Keyboard Handler - Move cursor out of sentence spans
+                const handleKeyDown = (event) => {
+                    const selection = window.getSelection();
+                    if (!selection.rangeCount) return;
+
+                    const range = selection.getRangeAt(0);
+                    const node = range.startContainer;
+
+                    // Check if cursor is inside a sentence span
+                    let sentenceSpan = null;
+                    if (node.nodeType === Node.TEXT_NODE && node.parentElement) {
+                        sentenceSpan = node.parentElement.closest('.sentence');
+                    } else if (node.nodeType === Node.ELEMENT_NODE) {
+                        sentenceSpan = node.closest('.sentence');
+                    }
+
+                    if (sentenceSpan && (event.key === ' ' || event.key === 'Enter')) {
+                        // Check if cursor is at the end of the span
+                        const spanText = sentenceSpan.textContent;
+                        const cursorOffset = range.startOffset;
+                        const nodeText = node.textContent || '';
+
+                        // If at the end of the span, move cursor after the span
+                        if (cursorOffset >= nodeText.length - 1 || cursorOffset === nodeText.length) {
+                            event.preventDefault();
+
+                            // Create a new text node after the span
+                            const textNode = document.createTextNode(event.key === 'Enter' ? '\n' : ' ');
+
+                            if (sentenceSpan.nextSibling) {
+                                sentenceSpan.parentNode.insertBefore(textNode, sentenceSpan.nextSibling);
+                            } else {
+                                sentenceSpan.parentNode.appendChild(textNode);
+                            }
+
+                            // Move cursor to the new text node
+                            const newRange = document.createRange();
+                            newRange.setStart(textNode, 1);
+                            newRange.collapse(true);
+                            selection.removeAllRanges();
+                            selection.addRange(newRange);
+                        }
+                    }
+                };
+
                 // Input Handler
                 const handleInput = (event) => {
                     const text = event.target.innerText;
@@ -780,7 +826,7 @@ Rules:
                         .filter(s => s.status === 'analyzing' || s.status === 'analyzed' || s.status === 'error')
                         .sort((a, b) => currentText.indexOf(a.currentText) - currentText.indexOf(b.currentText));
 
-                    sortedSentences.forEach(sentence => {
+                    sortedSentences.forEach((sentence, index) => {
                         const sentenceIndex = currentText.indexOf(sentence.currentText, lastIndex);
 
                         if (sentenceIndex !== -1) {
@@ -795,6 +841,10 @@ Rules:
                                 : `analyzed-${getScoreClass(sentence.analysis?.score || 0)}`;
 
                             html += `<span class="sentence ${statusClass}" data-id="${sentence.id}">${escapeHtml(sentence.currentText)}</span>`;
+
+                            // Add a space after the sentence to allow cursor to move out
+                            // This prevents cursor from being trapped inside the span
+                            html += ' ';
 
                             lastIndex = sentenceIndex + sentence.currentText.length;
                         }
@@ -936,6 +986,7 @@ Rules:
                     saveApiKey,
                     resetApiKey,
                     handleInput,
+                    handleKeyDown,
                     handleEditorClick,
                     getScoreClass,
                     reanalyze,
